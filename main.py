@@ -19,10 +19,13 @@ print(f"Serveur en attente de connexions sur {HOST}:{PORT}...")
 print(f"Serveur en attente de connexions sur {sIPReseau} (Réseau)")
 
 tWhiteListIP = [
-    "192.168.1.23"
+    "192.168.1.23",
+    "172.16.14.249",
+    "172.16.15.95",
+    "172.16.14.95",
 ]
 
-sIPServo = "127.0.0.1"
+sIPServo = "172.16.15.95"
 eServoMoteur = None
 
 def remove_client(s):
@@ -52,15 +55,22 @@ def sendMessage(s, message):
 def saveFile(sFileName, tData):
     try:
         with open(sFileName, "w") as f:
-            f.write("Servo;Angle;Time\n")
+            f.write("Step;Servo;Angle;Time\n")
             
-            for line in tData:
-                f.write(line + "\n")
+            for i in range(len(tData)):
+                line = tData[i].strip()
+                f.write(f"{i};{line}\n")
         print(f"Fichier {sFileName} enregistré avec succès.")
     except Exception as e:
         print(f"Erreur lors de l'enregistrement du fichier : {e}")
 
 tTempSave = []
+
+def Min(a, b):
+    if a < b:
+        return a
+    return b
+
 while True:
     try:
         readable, _, _ = select.select(sockets_list, [], [], 0.1)
@@ -98,12 +108,13 @@ while True:
                             response += "help/ - Afficher cette liste de commandes\n"
                             response += "setangles/{ServoN}:{Angle} - Définir l'angle du servo {ServoN}. Infini argument pour le servo N (Exemple : setangles/1:45;2:80\n"
                             response += "startmovement/ - Démarrer le mouvement\n"
-                            response += "sendmovement/{ServoN}:{Angle}:{iTime} - Envoyer un mouvement du servomoteur au serveur {ServoN} avec l'angle {Angle} et le temps {iTime} en secondes\n"
+                            response += "sendmovement{ServoN}:{Angle};Time:{iTime} - Envoyer un mouvement du servomoteur au serveur {ServoN} avec l'angle {Angle} et le temps {iTime} en secondes\n"
+                            response += "sendmovement_servo/{iTime} - Envoyer un mouvement au servo moteur avec le temps {iTime} en secondes\n"
                             response += "savemovement/{Nom} - Enregistrer le mouvement avec le nom {Nom} | Arrête la séquence de l'enregistrement des mouvements \n"
                             response += "loadmovement/{Nom}:{Instruction} - Charger le mouvement avec le nom {Nom} ; {Instruction} : 0, 1, ... est le numéro de la ligne à charger\n"
                             response += "listmovement/ - Lister les mouvements enregistrés\n"
                             response += "exit/ - Quitter le serveur\n"
-                            
+                                                        
                             sendMessage(s, response)
 
                             continue              
@@ -154,18 +165,47 @@ while True:
                                 sendMessage(s, "Erreur : Pas d'arguments fournis.")
                                 continue
 
-                            iServo = message.split("/")[1].split(":")[0].strip()
-                            iAngle = message.split("/")[1].split(":")[1].strip()
-                            iTime = message.split("/")[1].split(":")[2].strip()
-                            if iServo == "" or iAngle == "" or iTime == "":
-                                sendMessage(s, "Erreur : Argument vide.")
+                            tArgs = message.split("/")[1].split(":")
+                            
+                            # Example : sendmovement/1:45;2:80;3:90;Time:5
+                            if len(tArgs) < 2:
+                                sendMessage(s, "Erreur : Pas d'arguments fournis.")
                                 continue
 
-                            tTempSave.append(f"{iServo};{iAngle};{iTime}")
+                            iTime = tArgs[-1].split(":")[1].strip()
+                            for i in range(len(tArgs) - 1):
+                                if i == len(tArgs) - 1:
+                                    continue
+                                tArgs[i] = tArgs[i].strip()
+                                if tArgs[i] == "":
+                                    sendMessage(s, "Erreur : Argument vide.")
+                                    continue
 
-                            sendMessage(s, f"Mouvement enregistré : {iServo}:{iAngle}:{iTime}")
+                                # f"{ServoN}:{Angle}"
+                                iServo = tArgs[i].split(":")[0].strip()
+                                iAngle = tArgs[i].split(":")[1].strip()
+                                if iServo == "" or iAngle == "":
+                                    sendMessage(s, "Erreur : Argument vide.")
+                                    continue
 
-                        elif sCommand == "loadmovement":
+                                tTempSave.append(f"{iServo};{iAngle};{iTime}")
+
+                            print(f"Enregistrement du mouvement : {tTempSave}")
+
+                            # iServo = message.split("/")[1].split(":")[0].strip()
+                            # iAngle = message.split("/")[1].split(":")[1].strip()
+                            # iTime = message.split("/")[1].split(":")[2].strip()
+                            # if iServo == "" or iAngle == "" or iTime == "":
+                            #     sendMessage(s, "Erreur : Argument vide.")
+                            #     continue
+
+                            # tTempSave.append(f"{iServo};{iAngle};{iTime}")
+
+                            # sendMessage(s, f"Mouvement enregistré : {iServo}:{iAngle}:{iTime}")
+
+                            
+
+                        elif sCommand == "loadmovement": 
                             if eServoMoteur is None:
                                 print("Erreur : Pas de connexion au servo moteur.")
                                 sendMessage(s, "Erreur : Pas de connexion au servo moteur.")
@@ -175,35 +215,46 @@ while True:
                                 sendMessage(s, "Erreur : Pas d'arguments fournis.")
                                 continue
 
-                            sName = message.split("/")[1].split(":")[0].strip()
+
+                            tArgs = message.split("/")[1].split(":")
+                            if len(tArgs) < 2:
+                                sendMessage(s, "Erreur : Pas d'arguments fournis.")
+                                continue
+
+                            sName = tArgs[0].strip()
                             if sName == "":
                                 sendMessage(s, "Erreur : Nom vide.")
                                 continue
 
-                            iLine = message.split("/")[1].split(":")[1].strip()
+                            iLine = tArgs[1].strip()
                             if iLine == "":
                                 sendMessage(s, "Erreur : Ligne vide.")
                                 continue
 
                             with open(sName + ".csv", "r") as f:
-                                lines = f.readlines()
+                                tMovements = f.readlines()
 
-                                if int(iLine) >= len(lines):
-                                    sendMessage(s, "Erreur : Ligne hors limites.")
-                                    sendMessage(s, f"stoprequest/")
+                                sText = ""
+                                for i in range(len(tMovements)):
+                                    tData = tMovements[i].strip().split(";")
+
+                                    if tData[0] == "Step":
+                                        continue
+
+                                    if tData[0] == iLine:
+                                     #   tTempSave.append(f"{tData[1]};{tData[2]};{tData[3]}")
+                                        sText += f"{tData[1]}:{tData[2]}:{tData[3]}|"
+
+                                if len(sText) == 0:
+                                    sendMessage("servo", f"stop/")
+
                                     continue
 
-                                line = lines[int(iLine)].strip()
+                                sText = sText[:-1] # remove last "|"
 
-                                iServo = line.split(";")[0].strip()
-                                iAngle = line.split(";")[1].strip()
-                                iTime = line.split(";")[2].strip()
+                                print(f"sendmovement/{sName}\{sText}")
 
-                                if iServo == "" or iAngle == "" or iTime == "":
-                                    sendMessage(s, "Erreur : Argument vide.")
-                                    continue
-
-                                sendMessage("servo", f"sendmovement/{iServo}:{iAngle}:{iTime}")
+                                sendMessage("servo", f"sendmovement/{sName}\{sText}")
 
                         elif sCommand == "listmovement":
 
@@ -233,6 +284,24 @@ while True:
                             print(f"Client {clients[s]} a quitté.")
                             
                             remove_client(s)
+
+                        elif sCommand == "sendmovement_servo":
+                            if eServoMoteur is None:
+                                print("Erreur : Pas de connexion au servo moteur.")
+                                sendMessage(s, "Erreur : Pas de connexion au servo moteur.")
+                                continue
+
+                            if len(message.split("/")) < 2:
+                                sendMessage(s, "Erreur : Pas d'arguments fournis.")
+                                continue
+
+                            iTime = message.split("/")[1].strip()
+
+                            if iTime == "":
+                                sendMessage(s, "Erreur : Argument vide.")
+                                continue
+
+                            sendMessage("servo", f"sendmovement_servo/{iTime}")
                         else:
                             sendMessage(s, f"Commande Inconnu ({message})")
 
