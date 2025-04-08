@@ -23,6 +23,7 @@ tWhiteListIP = [
     "172.16.14.249",
     "172.16.15.95",
     "172.16.14.95",
+    "172.16.13.55"
 ]
 
 sIPServo = "172.16.15.95"
@@ -59,7 +60,7 @@ def saveFile(sFileName, tData):
             
             for i in range(len(tData)):
                 line = tData[i].strip()
-                f.write(f"{i};{line}\n")
+                f.write(f"{line}\n")
         print(f"Fichier {sFileName} enregistré avec succès.")
     except Exception as e:
         print(f"Erreur lors de l'enregistrement du fichier : {e}")
@@ -71,6 +72,13 @@ def Min(a, b):
         return a
     return b
 
+def Max(a, b):
+    if a > b:
+        return a
+    return b
+
+iStepSave = 1
+sOnMoveSave = ""
 while True:
     try:
         readable, _, _ = select.select(sockets_list, [], [], 0.1)
@@ -105,13 +113,12 @@ while True:
                         sCommand = message.split("/")[0].lower().strip()
                         if sCommand == "help":
                             response = "Liste des commandes disponibles :\n"
-                            response += "help/ - Afficher cette liste de commandes\n"
+                            response += "help/ - Afficher la liste de commandes\n"
                             response += "setangles/{ServoN}:{Angle} - Définir l'angle du servo {ServoN}. Infini argument pour le servo N (Exemple : setangles/1:45;2:80\n"
-                            response += "startmovement/ - Démarrer le mouvement\n"
-                            response += "sendmovement{ServoN}:{Angle};Time:{iTime} - Envoyer un mouvement du servomoteur au serveur {ServoN} avec l'angle {Angle} et le temps {iTime} en secondes\n"
+                            response += "sendmovement{ServoN}:{Angle};Time:{iTime} - Envoyer un mouvement du servomoteur au serveur {ServoN} avec l'angle {Angle} et le temps {iTime} en secondes. Seulement pour le servomoteur\n"
                             response += "sendmovement_servo/{iTime} - Envoyer un mouvement au servo moteur avec le temps {iTime} en secondes\n"
                             response += "savemovement/{Nom} - Enregistrer le mouvement avec le nom {Nom} | Arrête la séquence de l'enregistrement des mouvements \n"
-                            response += "loadmovement/{Nom}:{Instruction} - Charger le mouvement avec le nom {Nom} ; {Instruction} : 0, 1, ... est le numéro de la ligne à charger\n"
+                            response += "loadmovement/{Nom}:{Instruction} - Charger le mouvement avec le nom {Nom} ; {Instruction} : 1, ... est le numéro de l'étape à charger\n"
                             response += "listmovement/ - Lister les mouvements enregistrés\n"
                             response += "exit/ - Quitter le serveur\n"
                                                         
@@ -133,9 +140,8 @@ while True:
 
                             sendMessage("servo", message)
                         elif sCommand == "savemovement":
-                            if eServoMoteur is None:
-                                print("Erreur : Pas de connexion au servo moteur.")
-                                sendMessage(s, "Erreur : Pas de connexion au servo moteur.")
+                            if len(tTempSave) == 0:
+                                sendMessage(s, "Erreur : Pas de mouvement à enregistrer.")
                                 continue
 
                             if len(message.split("/")) < 2:
@@ -149,12 +155,18 @@ while True:
 
                             # .csv
                             sName = re.sub(r"[^a-zA-Z0-9_]", "_", sName) 
-                            sName = re.sub(r"_{2,}", "_", sName) 
-                            sFileName = f"{sName}.csv"
+                            sName = re.sub(r"_{2,}", "_", sName)
+                            
+                            if not sName.endswith(".csv"):
+                                sName += ".csv"
+
+                            sFileName = f"{sName}"
 
                             saveFile(sFileName, tTempSave)
 
-                            sendMessage(s, f"Mouvement enregistré : {sName}")
+                            tTempSave = []
+                            iStepSave = 1
+
                         elif sCommand == "sendmovement":
                             if eServoMoteur is None:
                                 print("Erreur : Pas de connexion au servo moteur.")
@@ -164,18 +176,30 @@ while True:
                             if len(message.split("/")) < 2:
                                 sendMessage(s, "Erreur : Pas d'arguments fournis.")
                                 continue
-
-                            tArgs = message.split("/")[1].split(":")
                             
-                            # Example : sendmovement/1:45;2:80;3:90;Time:5
+                            if eServoMoteur != s:
+                                print("Erreur : Seul le servomoteur est autorisé à utilisé cette commande")
+                                sendMessage(s, "Erreur : Seul le servomoteur est autorisé à utilisé cette commande")
+                                
+                                continue
+
+                            tArgs = message.split("/")[1].split(";")
+                            
                             if len(tArgs) < 2:
                                 sendMessage(s, "Erreur : Pas d'arguments fournis.")
                                 continue
 
-                            iTime = tArgs[-1].split(":")[1].strip()
+                            iTime = tArgs[-1].strip()
+                            iTime = iTime.split(":")[1].strip()
+
+                            if not iTime.isdigit():
+                                sendMessage(s, "Erreur : Argument non valide.")
+                                continue
+
                             for i in range(len(tArgs) - 1):
                                 if i == len(tArgs) - 1:
                                     continue
+
                                 tArgs[i] = tArgs[i].strip()
                                 if tArgs[i] == "":
                                     sendMessage(s, "Erreur : Argument vide.")
@@ -184,25 +208,17 @@ while True:
                                 # f"{ServoN}:{Angle}"
                                 iServo = tArgs[i].split(":")[0].strip()
                                 iAngle = tArgs[i].split(":")[1].strip()
-                                if iServo == "" or iAngle == "":
-                                    sendMessage(s, "Erreur : Argument vide.")
+                                if iServo == "" or iAngle == "" or not iServo.isdigit() or not iAngle.isdigit():
+                                    sendMessage(s, "Erreur : Argument vide ou invalide.")
                                     continue
 
-                                tTempSave.append(f"{iServo};{iAngle};{iTime}")
+                                tTempSave.append(f"{iStepSave};{iServo};{iAngle};{iTime}")
+
+                            iStepSave += 1
+
+                            print(f"tempSave : {tTempSave}")
 
                             print(f"Enregistrement du mouvement : {tTempSave}")
-
-                            # iServo = message.split("/")[1].split(":")[0].strip()
-                            # iAngle = message.split("/")[1].split(":")[1].strip()
-                            # iTime = message.split("/")[1].split(":")[2].strip()
-                            # if iServo == "" or iAngle == "" or iTime == "":
-                            #     sendMessage(s, "Erreur : Argument vide.")
-                            #     continue
-
-                            # tTempSave.append(f"{iServo};{iAngle};{iTime}")
-
-                            # sendMessage(s, f"Mouvement enregistré : {iServo}:{iAngle}:{iTime}")
-
                             
 
                         elif sCommand == "loadmovement": 
@@ -225,13 +241,22 @@ while True:
                             if sName == "":
                                 sendMessage(s, "Erreur : Nom vide.")
                                 continue
+                            
+                            if sName != "" and sName != sOnMoveSave:
+                                print("Un mouvement est déjà en cours, veuillez essayer a la fin du mouvement")
+                                
+                                continue
+                            
+                            sOnMoveSave = sName
+                            if not sName.endswith(".csv"):
+                                sName += ".csv"
 
                             iLine = tArgs[1].strip()
                             if iLine == "":
                                 sendMessage(s, "Erreur : Ligne vide.")
                                 continue
 
-                            with open(sName + ".csv", "r") as f:
+                            with open(sName, "r") as f:
                                 tMovements = f.readlines()
 
                                 sText = ""
@@ -242,15 +267,15 @@ while True:
                                         continue
 
                                     if tData[0] == iLine:
-                                     #   tTempSave.append(f"{tData[1]};{tData[2]};{tData[3]}")
                                         sText += f"{tData[1]}:{tData[2]}:{tData[3]}|"
 
                                 if len(sText) == 0:
                                     sendMessage("servo", f"stop/")
+                                    sOnMoveSave = ""
 
                                     continue
 
-                                sText = sText[:-1] # remove last "|"
+                                sText = sText[:-1] 
 
                                 print(f"sendmovement/{sName}\{sText}")
 
@@ -301,6 +326,10 @@ while True:
                                 sendMessage(s, "Erreur : Argument vide.")
                                 continue
 
+                            if not iTime.isdigit():
+                                sendMessage(s, "Erreur : Argument non valide.")
+                                continue
+
                             sendMessage("servo", f"sendmovement_servo/{iTime}")
                         else:
                             sendMessage(s, f"Commande Inconnu ({message})")
@@ -313,6 +342,10 @@ while True:
                 except ConnectionResetError:
                     print(f"Erreur : Connexion interrompue avec {clients[s]}")
                     
+                    remove_client(s)
+
+                except Exception as e:
+                    print(f"Erreur : {e}")
                     remove_client(s)
 
     except KeyboardInterrupt:
